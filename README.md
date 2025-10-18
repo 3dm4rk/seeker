@@ -4,9 +4,7 @@ advance hacktool monitoring
 🔍 System Monitor & Remote Access Tool
 A powerful, feature-rich system monitoring and remote access tool built with Python and Flask. This application provides real-time system monitoring, remote command execution, audio/video streaming, and popup notifications through a modern web interface.
 
-https://img.shields.io/badge/Python-3.8+-blue.svg
-https://img.shields.io/badge/Flask-2.0+-green.svg
-https://img.shields.io/badge/License-MIT-yellow.svg
+
 
 ✨ Features
 🎥 Real-time Monitoring
